@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>资金流向结构分析工具</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #171e26; --panel2: #1d2632; --border: #2a3644;
+    --text: #d8e1ea; --muted: #7d8fa3; --up: #e05252; --down: #3dbd7d;
+    --accent: #4a9eda; --warn: #e0a83e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "Microsoft YaHei", "PingFang SC", sans-serif; font-size: 14px; padding: 16px; }
+  h1 { font-size: 19px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+  input#code { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; width: 130px; font-size: 15px; letter-spacing: 1px; }
+  button { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 7px 13px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: bold; }
+  button.preset { padding: 5px 10px; font-size: 12px; color: var(--muted); }
+  select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 7px 8px; border-radius: 6px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { font-size: 12px; color: var(--muted); font-weight: normal; margin-bottom: 8px; letter-spacing: 1px; }
+  .card .big { font-size: 20px; font-weight: bold; margin-bottom: 6px; }
+  .card .desc { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .card .desc b { color: var(--text); }
+  .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; padding: 10px 6px 4px; }
+  .chart-title { font-size: 13px; color: var(--text); padding: 4px 12px 6px; font-weight: bold; }
+  .chart-note { font-size: 11px; color: var(--muted); padding: 0 12px 6px; }
+  .chart-body { width: 100%; height: 330px; }
+  .chart-body.short { height: 240px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: normal; position: sticky; top: 0; background: var(--panel); }
+  td:first-child, th:first-child { text-align: left; }
+  .r { color: var(--up); } .g { color: var(--down); } .dim { color: var(--muted); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; }
+  .tbl-wrap { max-height: 420px; overflow: auto; }
+  #status { color: var(--warn); font-size: 13px; margin: 8px 0; min-height: 18px; }
+  .footer { color: var(--muted); font-size: 11px; margin-top: 16px; line-height: 1.8; border-top: 1px solid var(--border); padding-top: 10px; }
+  .divlist { font-size: 12px; line-height: 2; max-height: 130px; overflow: auto; }
+  #main-area { display: none; }
+</style>
+</head>
+<body>
+<h1>资金流向结构分析工具 <span style="font-size:12px;color:var(--muted);font-weight:normal">v1.0</span></h1>
+<div class="sub">八象限意图定位 · 5日累计阶段划分 · 背离日信号 · 主力/小单镜像 —— 方法论详见《资金流向结构分析方法论》 | 分析工具,非投资建议</div>
+
+<div class="toolbar">
+  <input id="code" placeholder="股票代码" maxlength="6" value="000725">
+  <select id="days"><option value="60">60日</option><option value="120" selected>120日</option><option value="250">250日</option></select>
+  <button class="primary" onclick="load()">分 析</button>
+  <span style="color:var(--muted);font-size:12px;margin-left:6px">自选:</span>
+  <span id="presets"></span>
+</div>
+<div id="status"></div>
+
+<div id="main-area">
+  <div class="cards" id="cards"></div>
+
+  <div class="chart">
+    <div class="chart-title">主图:收盘价 × 5日累计主力净额(阶段带 + 背离日标记)</div>
+    <div class="chart-note">背景色带 = 5日累计符号段(红=流入段,绿=流出段);▲=流入不涨(疑似吸筹) ▼=流出还涨(疑似派发)</div>
+    <div class="chart-body" id="chart1"></div>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">每日资金结构:超大/大/中/小单净额(堆叠) × 主力净占比</div>
+    <div class="chart-note">灰色柱区 = 当日换手&lt;1%,占比指标失真(如一字板),不作信号解读</div>
+    <div class="chart-body" id="chart2"></div>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">主力 vs 小单:区间累计净额镜像 × 换手率</div>
+    <div class="chart-note">两线张口越大 = 筹码从主力向散户(或反向)转移越多;换手是信号放大器</div>
+    <div class="chart-body short" id="chart3"></div>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">最近30个交易日明细</div>
+    <div class="tbl-wrap"><table id="tbl"></table></div>
+  </div>
+</div>
+
+<div class="footer">
+  数据源:东方财富公开接口(浏览器直连,无服务器)。四类单为按单笔金额的被动归类,存在拆单/对倒污染;北向、大宗、ETF申赎不在统计内。
+  阈值按流通市值自适应:&gt;500亿(大盘)异常日|净占比|≥4%,100~500亿≥6%,&lt;100亿(小盘/ST)≥8%。
+  本工具输出为框架化数据展示与规则推演,不构成投资建议。
+</div>
+
+<script>
+const PRESETS = [
+  ["000725","京东方A"],["002217","合力泰"],["603612","索通发展"],["600331","宏达股份"],
+  ["300092","科新机电"],["002444","巨星科技"],["002841","视源股份"],["603100","川仪股份"],["300435","中泰股份"]
+];
+document.getElementById('presets').innerHTML = PRESETS.map(p =>
+  `<button class="preset" onclick="document.getElementById('code').value='${p[0]}';load()">${p[1]}</button>`).join(' ');
+
+// ---------- 数据层:JSONP + 镜像域名轮询 ----------
+// 东财对单IP的API有限流,主域被掐时轮询编号镜像域名(东财官网前端同款抗限流方式)
+let jsonpSeq = 0;
+function jsonp(url, timeout = 6000) {
+  return new Promise((resolve, reject) => {
+    const cb = '_ffcb' + (++jsonpSeq) + '_' + Date.now();
+    const s = document.createElement('script');
+    const timer = setTimeout(() => { cleanup(); reject(new Error('超时')); }, timeout);
+    function cleanup() { clearTimeout(timer); delete window[cb]; s.remove(); }
+    window[cb] = data => { cleanup(); resolve(data); };
+    s.onerror = () => { cleanup(); reject(new Error('连接被拒')); };
+    s.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + cb;
+    document.head.appendChild(s);
+  });
+}
+function secid(code) { return (code[0] === '6' || code[0] === '9' ? '1.' : '0.') + code; }
+const MIRRORS = ['', '98.', '21.', '5.', '63.', '48.'];
+function shuffled(a) { return a.map(v=>[Math.random(),v]).sort((x,y)=>x[0]-y[0]).map(v=>v[1]); }
+async function fetchApi(base, path, log) {
+  const protos = location.protocol === 'https:' ? ['https'] : ['https', 'http'];
+  const errs = [];
+  for (const proto of protos) {
+    for (const m of shuffled(MIRRORS)) {
+      const host = m + base;
+      if (log) log(`尝试 ${host} …`);
+      try { return await jsonp(`${proto}://${host}${path}`); }
+      catch (e) { errs.push(`${host}(${e.message})`); }
+    }
+  }
+  throw new Error('全部节点失败: ' + errs.slice(0,3).join(' / ') + ' 等');
+}
+
+// ---------- 分析核心 ----------
+function parseRows(klines, floatShares) {
+  const rows = klines.map(line => {
+    const p = line.split(',');
+    const d = {
+      date: p[0], main: +p[1]/1e8, small: +p[2]/1e8, mid: +p[3]/1e8, big: +p[4]/1e8, xbig: +p[5]/1e8,
+      mainPct: +p[6], smallPct: +p[7], midPct: +p[8], bigPct: +p[9], xbigPct: +p[10],
+      close: +p[11], chg: +p[12]
+    };
+    d.amount = Math.abs(d.mainPct) > 0.05 ? Math.abs(d.main / (d.mainPct/100)) : null;
+    return d;
+  });
+  rows.forEach((r, i) => {
+    if (r.amount === null) {
+      const near = [rows[i-1], rows[i+1]].filter(x => x && x.amount);
+      r.amount = near.length ? near.reduce((a,b)=>a+b.amount,0)/near.length : 0.5;
+    }
+    if (floatShares) {
+      r.fmv = floatShares * r.close / 1e8;
+      r.turn = r.amount / r.fmv * 100;
+      r.bp = r.main / r.fmv * 10000;
+    } else { r.fmv = null; r.turn = null; r.bp = null; }
+  });
+  return rows;
+}
+const sum = (arr, f) => arr.reduce((a,b)=>a+(f?f(b):b),0);
+
+function analyze(rows) {
+  const n = rows.length;
+  const cum5 = rows.map((_, i) => sum(rows.slice(Math.max(0,i-4), i+1), r=>r.main));
+  // 阶段:5日累计符号段
+  const phases = [];
+  let start = 0;
+  for (let i = 1; i < n; i++) {
+    if ((cum5[i] > 0) !== (cum5[i-1] > 0)) { phases.push({a:start, b:i-1, pos: cum5[i-1] > 0}); start = i; }
+  }
+  phases.push({a:start, b:n-1, pos: cum5[n-1] > 0});
+  phases.forEach(ph => {
+    const seg = rows.slice(ph.a, ph.b+1);
+    ph.main = sum(seg, r=>r.main); ph.small = sum(seg, r=>r.small);
+    const base = ph.a > 0 ? rows[ph.a-1].close : seg[0].close;
+    ph.px = (seg[seg.length-1].close/base - 1) * 100;
+    ph.days = seg.length;
+  });
+  // 阈值(按流通市值)
+  const fmv = rows[n-1].fmv;
+  const thr = fmv == null ? 6 : fmv > 500 ? 4 : fmv > 100 ? 6 : 8;
+  // 背离日(过滤失真:换手>=1%或未知)
+  const div = [];
+  rows.forEach((r, i) => {
+    const liquid = r.turn == null || r.turn >= 1;
+    if (!liquid) return;
+    if (r.mainPct >= thr && r.chg < 0) div.push({i, kind:'in', r});
+    if (r.mainPct <= -thr && r.chg > 0) div.push({i, kind:'out', r});
+  });
+  // 八象限(最近5日)
+  const last5 = rows.slice(-5);
+  const pxChg = (last5[last5.length-1].close / rows[Math.max(0, n-6)].close - 1) * 100;
+  const m5 = sum(last5, r=>r.main), s5 = sum(last5, r=>r.small);
+  const pDir = pxChg > 1.5 ? '涨' : pxChg < -1.5 ? '跌' : '平';
+  const mDir = m5 > 0 ? '进' : '出', sDir = s5 > 0 ? '进' : '出';
+  const OCT = {
+    '涨进出': ['主升拉抬', '最佳持股区,回调可加', 'up'],
+    '涨进进': ['共振加速', '可持有,已近情绪高位,设离场线', 'up'],
+    '涨出进': ['拉高派发', '分批兑现,严禁新进', 'down'],
+    '涨出出': ['滞涨撤离', '警报,减仓', 'down'],
+    '平进出': ['吸筹/洗盘', '潜伏观察区,结合消息面', 'up'],
+    '平进进': ['温和进场', '观察是否演化为主升', 'flat'],
+    '平出进': ['无主力/阴跌前', '回避', 'down'],
+    '平出出': ['资金撤离', '回避', 'down'],
+    '跌进出': ['压价吸筹/护盘', '最强背离,重点跟踪', 'up'],
+    '跌进进': ['抢反弹博弈', '短线资金行为,谨慎', 'flat'],
+    '跌出进': ['出货杀跌', '严禁抄底,等流出衰竭', 'down'],
+    '跌出出': ['多杀多恐慌', '恐慌后段可观察企稳', 'flat'],
+  };
+  const oct = OCT[pDir + mDir + sDir] || ['未定义', '观察', 'flat'];
+  // 衰竭监测:最近3日均净占比 vs 近30日内最猛3日滚动均值
+  const recent = rows.slice(-30);
+  let peakAvg = 0;
+  for (let i = 0; i + 3 <= recent.length; i++) {
+    const w = sum(recent.slice(i, i+3), r=>r.mainPct) / 3;
+    if (Math.abs(w) > Math.abs(peakAvg)) peakAvg = w;
+  }
+  const last3Avg = sum(rows.slice(-3), r=>r.mainPct) / 3;
+  // 低流动性天数
+  const illiquid = rows.filter(r => r.turn != null && r.turn < 1).length;
+  return { cum5, phases, div, thr, fmv, oct, pDir, mDir, sDir, pxChg, m5, s5, peakAvg, last3Avg, illiquid };
+}
+
+// ---------- 渲染 ----------
+const F = v => (v>=0?'+':'') + v.toFixed(2);
+const F1 = v => (v>=0?'+':'') + v.toFixed(1);
+const cls = v => v > 0 ? 'r' : v < 0 ? 'g' : 'dim';
+let charts = [];
+
+function render(meta, rows, A) {
+  document.getElementById('main-area').style.display = 'block';
+  const n = rows.length, last = rows[n-1];
+  const octColor = A.oct[2] === 'up' ? 'var(--up)' : A.oct[2] === 'down' ? 'var(--down)' : 'var(--warn)';
+  const curPh = A.phases[A.phases.length-1];
+  const recentDiv = A.div.filter(d => d.i >= n - 20);
+  const shrink = A.peakAvg !== 0 ? (1 - Math.abs(A.last3Avg)/Math.abs(A.peakAvg)) * 100 : 0;
+
+  document.getElementById('cards').innerHTML = `
+    <div class="card">
+      <h3>${meta.name} (${meta.code}) · ${last.date}</h3>
+      <div class="big">${last.close.toFixed(2)} <span class="${cls(last.chg)}" style="font-size:15px">${F(last.chg)}%</span></div>
+      <div class="desc">区间 ${rows[0].close.toFixed(2)} → ${last.close.toFixed(2)}(<b class="${cls(last.close/rows[0].close-1)}">${F1((last.close/rows[0].close-1)*100)}%</b>)
+      ${A.fmv ? ` · 流通市值 <b>${A.fmv.toFixed(0)}亿</b>` : ''} · 异常日阈值 <b>±${A.thr}%</b>
+      ${A.illiquid > 3 ? `<br><span style="color:var(--warn)">⚠ 区间含${A.illiquid}个低流动日(换手&lt;1%),该期间占比信号失真</span>` : ''}</div>
+    </div>
+    <div class="card">
+      <h3>八象限定位(近5日:价${A.pDir} / 主力${A.mDir} / 小单${A.sDir})</h3>
+      <div class="big" style="color:${octColor}">${A.oct[0]}</div>
+      <div class="desc">近5日 价格<b class="${cls(A.pxChg)}">${F1(A.pxChg)}%</b> · 主力<b class="${cls(A.m5)}">${F(A.m5)}亿</b> · 小单<b class="${cls(A.s5)}">${F(A.s5)}亿</b><br>框架应对:<b>${A.oct[1]}</b></div>
+    </div>
+    <div class="card">
+      <h3>当前阶段(5日累计符号段)</h3>
+      <div class="big" style="color:${curPh.pos?'var(--up)':'var(--down)'}">${curPh.pos?'流入段':'流出段'} 第${curPh.days}天</div>
+      <div class="desc">段内 主力<b class="${cls(curPh.main)}">${F(curPh.main)}亿</b> · 小单<b class="${cls(curPh.small)}">${F(curPh.small)}亿</b> · 涨跌<b class="${cls(curPh.px)}">${F1(curPh.px)}%</b><br>本区间共切出 <b>${A.phases.filter(p=>p.days>=3).length}</b> 个有效阶段</div>
+    </div>
+    <div class="card">
+      <h3>流出/流入衰竭监测(近30日)</h3>
+      <div class="big">${A.peakAvg !== 0 ? (shrink > 0 ? '强度收敛 ' + shrink.toFixed(0) + '%' : '仍在峰值区') : '—'}</div>
+      <div class="desc">近30日最猛3日均净占比 <b class="${cls(A.peakAvg)}">${F1(A.peakAvg)}%</b> → 最近3日均 <b class="${cls(A.last3Avg)}">${F1(A.last3Avg)}%</b><br>净占比连续收敛至±2%内 = 一段资金动作结束的信号</div>
+    </div>
+    <div class="card">
+      <h3>背离日警报(近20日 ${recentDiv.length} 次)</h3>
+      <div class="divlist">${
+        A.div.length === 0 ? '<span class="dim">区间内无背离日</span>' :
+        A.div.slice(-6).reverse().map(d =>
+          `<div>${d.r.date} <span class="${d.kind==='in'?'r':'g'}">${d.kind==='in'?'▲流入不涨(疑似吸筹)':'▼流出还涨(疑似派发)'}</span> 主力${F(d.r.main)}亿(${F1(d.r.mainPct)}%) 当日${F(d.r.chg)}%</div>`).join('')
+      }</div>
+    </div>`;
+
+  // 图1 主图
+  const dates = rows.map(r => r.date.slice(5));
+  charts.forEach(c => c.dispose()); charts = [];
+  const c1 = echarts.init(document.getElementById('chart1'), null, {renderer:'canvas'});
+  charts.push(c1);
+  const markAreas = A.phases.filter(p=>p.days>=2).map(p => [
+    { xAxis: dates[p.a], itemStyle: { color: p.pos ? 'rgba(224,82,82,0.10)' : 'rgba(61,189,125,0.10)' } },
+    { xAxis: dates[p.b] }
+  ]);
+  const divPts = A.div.map(d => ({
+    coord: [dates[d.i], rows[d.i].close],
+    symbol: d.kind==='in' ? 'triangle' : 'pin',
+    symbolSize: d.kind==='in' ? 13 : 16,
+    symbolRotate: d.kind==='in' ? 0 : 180,
+    itemStyle: { color: d.kind==='in' ? '#e05252' : '#3dbd7d', borderColor:'#fff', borderWidth:1 },
+    value: d.kind==='in' ? '吸' : '派'
+  }));
+  c1.setOption({
+    backgroundColor: 'transparent', animation: false,
+    tooltip: { trigger: 'axis', backgroundColor:'#1d2632', borderColor:'#2a3644', textStyle:{color:'#d8e1ea', fontSize:12} },
+    legend: { textStyle: { color: '#7d8fa3' }, top: 0 },
+    grid: { left: 55, right: 60, top: 30, bottom: 45 },
+    xAxis: { type: 'category', data: dates, axisLine:{lineStyle:{color:'#2a3644'}}, axisLabel:{color:'#7d8fa3'} },
+    yAxis: [
+      { type: 'value', name: '5日累计(亿)', scale: true, splitLine:{lineStyle:{color:'#212b38'}}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} },
+      { type: 'value', name: '收盘价', scale: true, splitLine:{show:false}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} }
+    ],
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 6, borderColor:'#2a3644', textStyle:{color:'#7d8fa3'} }],
+    series: [
+      { name: '5日累计主力净额', type: 'bar', data: A.cum5.map(v=>+v.toFixed(2)),
+        itemStyle: { color: p => p.value >= 0 ? 'rgba(224,82,82,0.65)' : 'rgba(61,189,125,0.65)' } },
+      { name: '收盘价', type: 'line', yAxisIndex: 1, data: rows.map(r=>r.close), showSymbol: false,
+        lineStyle: { color: '#4a9eda', width: 2 },
+        markArea: { silent: true, data: markAreas },
+        markPoint: { data: divPts, label: { show:true, fontSize:9, color:'#fff', offset:[0,0] } } }
+    ]
+  });
+
+  // 图2 每日结构
+  const c2 = echarts.init(document.getElementById('chart2'));
+  charts.push(c2);
+  const illiquidMark = rows.map((r,i) => r.turn != null && r.turn < 1 ? i : -1).filter(i=>i>=0);
+  c2.setOption({
+    backgroundColor: 'transparent', animation: false,
+    tooltip: { trigger: 'axis', backgroundColor:'#1d2632', borderColor:'#2a3644', textStyle:{color:'#d8e1ea', fontSize:12} },
+    legend: { textStyle: { color: '#7d8fa3' }, top: 0 },
+    grid: { left: 55, right: 60, top: 30, bottom: 45 },
+    xAxis: { type: 'category', data: dates, axisLine:{lineStyle:{color:'#2a3644'}}, axisLabel:{color:'#7d8fa3'} },
+    yAxis: [
+      { type: 'value', name: '净额(亿)', splitLine:{lineStyle:{color:'#212b38'}}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} },
+      { type: 'value', name: '净占比%', splitLine:{show:false}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} }
+    ],
+    dataZoom: [{ type: 'inside', startValue: Math.max(0, n-60) }, { type: 'slider', height: 16, bottom: 6, borderColor:'#2a3644', textStyle:{color:'#7d8fa3'} }],
+    series: [
+      { name: '超大单', type: 'bar', stack: 's', data: rows.map(r=>+r.xbig.toFixed(2)), itemStyle:{color:'#c23b3b'} },
+      { name: '大单', type: 'bar', stack: 's', data: rows.map(r=>+r.big.toFixed(2)), itemStyle:{color:'#e08585'} },
+      { name: '中单', type: 'bar', stack: 's', data: rows.map(r=>+r.mid.toFixed(2)), itemStyle:{color:'#7d8fa3'} },
+      { name: '小单', type: 'bar', stack: 's', data: rows.map(r=>+r.small.toFixed(2)), itemStyle:{color:'#3dbd7d'} },
+      { name: '主力净占比', type: 'line', yAxisIndex: 1, showSymbol: false, data: rows.map(r=>r.mainPct), lineStyle:{color:'#e0a83e', width:1.5} },
+      { name: '低流动失真', type: 'scatter', data: illiquidMark.map(i=>[dates[i], 0]), symbolSize: 8, itemStyle:{color:'rgba(125,143,163,0.5)'} }
+    ]
+  });
+
+  // 图3 镜像累计 + 换手
+  const c3 = echarts.init(document.getElementById('chart3'));
+  charts.push(c3);
+  let cm = 0, cs = 0;
+  const cumMain = rows.map(r => +(cm += r.main).toFixed(2));
+  const cumSmall = rows.map(r => +(cs += r.small).toFixed(2));
+  c3.setOption({
+    backgroundColor: 'transparent', animation: false,
+    tooltip: { trigger: 'axis', backgroundColor:'#1d2632', borderColor:'#2a3644', textStyle:{color:'#d8e1ea', fontSize:12} },
+    legend: { textStyle: { color: '#7d8fa3' }, top: 0 },
+    grid: { left: 55, right: 60, top: 30, bottom: 25 },
+    xAxis: { type: 'category', data: dates, axisLine:{lineStyle:{color:'#2a3644'}}, axisLabel:{color:'#7d8fa3'} },
+    yAxis: [
+      { type: 'value', name: '累计净额(亿)', splitLine:{lineStyle:{color:'#212b38'}}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} },
+      { type: 'value', name: '换手%', splitLine:{show:false}, axisLabel:{color:'#7d8fa3'}, nameTextStyle:{color:'#7d8fa3'} }
+    ],
+    series: [
+      { name: '主力累计', type: 'line', showSymbol: false, data: cumMain, lineStyle:{color:'#e05252', width:2}, areaStyle:{color:'rgba(224,82,82,0.07)'} },
+      { name: '小单累计', type: 'line', showSymbol: false, data: cumSmall, lineStyle:{color:'#3dbd7d', width:2}, areaStyle:{color:'rgba(61,189,125,0.07)'} },
+      { name: '换手率', type: 'bar', yAxisIndex: 1, data: rows.map(r=>r.turn==null?null:+r.turn.toFixed(2)), itemStyle:{color:'rgba(74,158,218,0.35)'} }
+    ]
+  });
+
+  // 明细表
+  const t = document.getElementById('tbl');
+  const rev = rows.slice(-30).reverse();
+  t.innerHTML = `<tr><th>日期</th><th>收盘</th><th>涨跌%</th><th>主力(亿)</th><th>净占比%</th><th>超大(亿)</th><th>大单</th><th>中单</th><th>小单</th><th>换手%</th><th>占流通bp</th><th>形态</th></tr>` +
+    rev.map(r => {
+      let form = '';
+      const xt = 1.5, st = 0.5;
+      if (r.turn != null && r.turn < 1) form = '<span class="dim">失真</span>';
+      else if (r.xbigPct > xt && r.smallPct < -st) form = '<span class="tag" style="background:#3a2222;color:#e08585">A 拉升形</span>';
+      else if (r.xbigPct < -xt && r.smallPct > st) form = '<span class="tag" style="background:#1e3328;color:#7dcf9f">B 出货形</span>';
+      else if (r.xbigPct > xt && r.smallPct > st) form = '<span class="tag" style="background:#40331a;color:#e0c26e">C 同进</span>';
+      else if (r.xbigPct < -xt && r.smallPct < -st) form = '<span class="tag" style="background:#3a2a3a;color:#cf8fd0">D 同出</span>';
+      const isDiv = A.div.some(d => rows[d.i].date === r.date);
+      return `<tr${isDiv ? ' style="background:rgba(224,168,62,0.08)"' : ''}>
+        <td>${r.date}${isDiv?' ⚑':''}</td><td>${r.close.toFixed(2)}</td>
+        <td class="${cls(r.chg)}">${F(r.chg)}</td><td class="${cls(r.main)}">${F(r.main)}</td>
+        <td class="${cls(r.mainPct)}">${F1(r.mainPct)}</td><td class="${cls(r.xbig)}">${F(r.xbig)}</td>
+        <td class="${cls(r.big)}">${F(r.big)}</td><td class="${cls(r.mid)}">${F(r.mid)}</td>
+        <td class="${cls(r.small)}">${F(r.small)}</td>
+        <td>${r.turn==null?'—':r.turn.toFixed(2)}</td><td>${r.bp==null?'—':F1(r.bp)}</td><td>${form}</td></tr>`;
+    }).join('');
+}
+
+// ---------- 主流程 ----------
+async function load() {
+  const code = document.getElementById('code').value.trim();
+  const days = document.getElementById('days').value;
+  const st = document.getElementById('status');
+  if (!/^\d{6}$/.test(code)) { st.textContent = '请输入6位股票代码'; return; }
+  st.textContent = '数据加载中…';
+  const log = m => { st.textContent = '数据加载中… ' + m; };
+  try {
+    const sid = secid(code);
+    const ff = await fetchApi('push2his.eastmoney.com', `/api/qt/stock/fflow/daykline/get?lmt=${days}&klt=101&secid=${sid}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`, log);
+    const info = await fetchApi('push2.eastmoney.com', `/api/qt/stock/get?secid=${sid}&fields=f58,f85`).catch(()=>null);
+    if (!ff || !ff.data || !ff.data.klines || !ff.data.klines.length) { st.textContent = '未获取到数据,请检查代码是否正确'; return; }
+    const floatShares = info && info.data && info.data.f85 ? +info.data.f85 : null;
+    const name = ff.data.name || (info && info.data && info.data.f58) || code;
+    const rows = parseRows(ff.data.klines, floatShares);
+    const A = analyze(rows);
+    render({ code, name }, rows, A);
+    st.textContent = '';
+    localStorage.setItem('ff_last_code', code);
+  } catch (e) {
+    st.innerHTML = '加载失败:' + e.message +
+      '<br>最常见原因是<b>东财对当前出口IP临时限流</b>(频繁请求后触发,几小时内自动解除)。' +
+      '可尝试:① 稍等片刻点"分 析"重试 ② 若开着代理,切换节点或改直连(换出口IP立即恢复) ③ 用手机热点验证。';
+  }
+}
+window.addEventListener('resize', () => charts.forEach(c => c.resize()));
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('ff_last_code');
+  if (saved) document.getElementById('code').value = saved;
+  if (window.echarts) load();
+  else document.getElementById('status').textContent = '图表库加载失败,请检查网络后刷新';
+});
+document.getElementById('code').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+</script>
+<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+<script>
+if (!window.echarts) document.write('<script src="https://cdn.staticfile.net/echarts/5.4.3/echarts.min.js"><\/script>');
+</script>
+<script>
+if (!window.echarts) document.write('<script src="https://unpkg.com/echarts@5.4.3/dist/echarts.min.js"><\/script>');
+</script>
+</body>
+</html>
